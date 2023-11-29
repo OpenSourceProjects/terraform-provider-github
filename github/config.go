@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -136,6 +137,22 @@ func (c *Config) ConfigureOwner(owner *Owner) (*Owner, error) {
 	return owner, nil
 }
 
+type countingClient struct {
+	original http.RoundTripper
+	counter  int
+}
+
+func (c *countingClient) RoundTrip(r *http.Request) (*http.Response, error) {
+	c.counter = c.counter + 1
+	const colorRed = "\033[0;31m"
+	const colorNone = "\033[0m"
+	log.Printf("%s [FRANKY INFO] Counter is now %d %s", colorRed, c.counter, colorNone)
+	log.Printf("%s [FRANKY INFO] %s %s%s", colorRed, r.Method, r.URL.String(), colorNone)
+	resp, err := c.original.RoundTrip(r)
+	log.Printf("%s [FRANKY INFO] Response code is %d: %s%s", colorRed, resp.StatusCode, resp.Status, colorNone)
+	return resp, err
+}
+
 // Meta returns the meta parameter that is passed into subsequent resources
 // https://godoc.org/github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema#ConfigureFunc
 func (c *Config) Meta() (interface{}, error) {
@@ -145,6 +162,10 @@ func (c *Config) Meta() (interface{}, error) {
 		client = c.AnonymousHTTPClient()
 	} else {
 		client = c.AuthenticatedHTTPClient()
+	}
+
+	client.Transport = &countingClient{
+		original: client.Transport,
 	}
 
 	v3client, err := c.NewRESTClient(client)
