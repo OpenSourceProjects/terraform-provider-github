@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/go-github/v65/github"
@@ -140,16 +141,22 @@ func (c *Config) ConfigureOwner(owner *Owner) (*Owner, error) {
 type countingClient struct {
 	original http.RoundTripper
 	counter  int
+	lock     sync.Mutex
 }
 
 func (c *countingClient) RoundTrip(r *http.Request) (*http.Response, error) {
-	c.counter = c.counter + 1
 	const colorRed = "\033[0;31m"
 	const colorNone = "\033[0m"
-	log.Printf("%s [FRANKY INFO] Counter is now %d %s", colorRed, c.counter, colorNone)
-	log.Printf("%s [FRANKY INFO] %s %s%s", colorRed, r.Method, r.URL.String(), colorNone)
 	resp, err := c.original.RoundTrip(r)
-	log.Printf("%s [FRANKY INFO] Response code is %d: %s%s", colorRed, resp.StatusCode, resp.Status, colorNone)
+
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.counter = c.counter + 1
+	log.Printf("%s [FRANKY INFO] Request %d - %d: %s %s%s", colorRed, c.counter, resp.StatusCode, r.Method, r.URL.String(), colorNone)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Printf("%s [FRANKY INFO] Request %d Error: %s%s", colorRed, c.counter, resp.Status, colorNone)
+	}
+
 	return resp, err
 }
 
