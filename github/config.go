@@ -1,7 +1,9 @@
 package github
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -44,7 +46,6 @@ type Owner struct {
 var GHECDataResidencyMatch = regexp.MustCompile(`^https:\/\/[a-zA-Z0-9.\-]*\.ghe\.com$`)
 
 func RateLimitedHTTPClient(client *http.Client, writeDelay time.Duration, readDelay time.Duration, retryDelay time.Duration, parallelRequests bool, retryableErrors map[int]bool, maxRetries int) *http.Client {
-
 	client.Transport = NewEtagTransport(client.Transport)
 	client.Transport = NewRateLimitTransport(client.Transport, WithWriteDelay(writeDelay), WithReadDelay(readDelay), WithParallelRequests(parallelRequests))
 	client.Transport = logging.NewSubsystemLoggingHTTPTransport("GitHub", client.Transport)
@@ -61,7 +62,6 @@ func RateLimitedHTTPClient(client *http.Client, writeDelay time.Duration, readDe
 }
 
 func (c *Config) AuthenticatedHTTPClient() *http.Client {
-
 	ctx := context.Background()
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: c.Token},
@@ -81,7 +81,6 @@ func (c *Config) AnonymousHTTPClient() *http.Client {
 }
 
 func (c *Config) NewGraphQLClient(client *http.Client) (*githubv4.Client, error) {
-
 	uv4, err := url.Parse(c.BaseURL)
 	if err != nil {
 		return nil, err
@@ -97,7 +96,6 @@ func (c *Config) NewGraphQLClient(client *http.Client) (*githubv4.Client, error)
 }
 
 func (c *Config) NewRESTClient(client *http.Client) (*github.Client, error) {
-
 	uv3, err := url.Parse(c.BaseURL)
 	if err != nil {
 		return nil, err
@@ -152,12 +150,23 @@ type countingClient struct {
 func (c *countingClient) RoundTrip(r *http.Request) (*http.Response, error) {
 	const colorRed = "\033[0;31m"
 	const colorNone = "\033[0m"
+	var query string
+	if strings.Contains(r.URL.String(), "graphql") {
+		defer r.Body.Close()
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		r.Body = io.NopCloser(bytes.NewBuffer(body))
+		query = " - " + string(body)
+	}
+
 	resp, err := c.original.RoundTrip(r)
 
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.counter = c.counter + 1
-	log.Printf("%s [FRANKY INFO] Request %d - %d: %s %s%s", colorRed, c.counter, resp.StatusCode, r.Method, r.URL.String(), colorNone)
+	log.Printf("%s [FRANKY INFO] Request %d - %d: %s %s%s", colorRed, c.counter, resp.StatusCode, r.Method, r.URL.String()+query, colorNone)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.Printf("%s [FRANKY INFO] Request %d Error: %s%s", colorRed, c.counter, resp.Status, colorNone)
 	}
@@ -168,7 +177,6 @@ func (c *countingClient) RoundTrip(r *http.Request) (*http.Response, error) {
 // Meta returns the meta parameter that is passed into subsequent resources
 // https://godoc.org/github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema#ConfigureFunc
 func (c *Config) Meta() (interface{}, error) {
-
 	var client *http.Client
 	if c.Anonymous() {
 		client = c.AnonymousHTTPClient()
